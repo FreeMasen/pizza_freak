@@ -1,0 +1,16 @@
+[package]
+name = "pizza_freak"
+version = "0.1.0"
+authors = ["Robert Masen <r@robertmasen.pizza>"]
+
+[dependencies]
+html5ever = "0.22.3"
+chrono = { version = "0.4.6", features = ["serde"] }
+reqwest = "0.8.8"
+serde = "1"
+serde_derive = "1"
+serde_json = "1"
+lettre = "0.8.2"
+toml = "0.4.6"
+log = "0.4.5"
+env_logger = "0.5.13"

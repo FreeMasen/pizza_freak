@@ -20,7 +20,7 @@ use chrono::{
     Local,
     Duration
 };
-use dir::home_dir;
+use dirs::home_dir;
 use html5ever::{
     tendril::TendrilSink,
     rcdom::{

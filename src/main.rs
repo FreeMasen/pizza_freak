@@ -1,4 +1,5 @@
 extern crate chrono;
+extern crate dirs;
 extern crate env_logger;
 extern crate html5ever;
 extern crate lettre;
@@ -14,10 +15,24 @@ extern crate toml;
 use std::default::Default;
 use std::collections::HashMap;
 
-use chrono::{DateTime, Local, Duration};
-use html5ever::tendril::TendrilSink;
-use html5ever::rcdom::{NodeData, Handle};
-use lettre::{SimpleSendableEmail, EmailTransport, SmtpTransport};
+use chrono::{
+    DateTime,
+    Local,
+    Duration
+};
+use dir::home_dir;
+use html5ever::{
+    tendril::TendrilSink,
+    rcdom::{
+        NodeData,
+        Handle
+    }
+};
+use lettre::{
+    SimpleSendableEmail,
+    EmailTransport,
+    SmtpTransport
+};
 use reqwest::get;
 
 fn main() -> Result<(), Error> {
@@ -54,7 +69,10 @@ fn main() -> Result<(), Error> {
 }
 
 fn get_config() -> Result<Config, Error> {
-    let config = toml::from_str(include_str!("../config.toml"))?;
+    let mut config_path = home_dir().ok_or(Error::other("Unable to get home directory"))?;
+    config_path.push(".pizza_freak");
+    let config_text = ::std::fs::read_to_string(config_path)?;
+    let config = toml::from_str(&config_text)?;
     Ok(config)
 }
 

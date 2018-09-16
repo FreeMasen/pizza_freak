@@ -83,7 +83,9 @@ fn init_logging() {
 }
 
 fn update_orders(user: &mut User) -> Result<(), Error> {
+    debug!(target: "pizza_freak:debug", "updating orders for {}", user.name);
     let result = get_order_list(&user.phone_number.dashes_string())?;
+    debug!(target: "pizza_freak:debug", "got orders from phone numbers");
     if let Response::List(orders) = result.response {
         for order in orders {
             if !user.orders.iter().any(|o| o == &order) {
@@ -91,6 +93,7 @@ fn update_orders(user: &mut User) -> Result<(), Error> {
             }
         }
     }
+    debug!(target: "pizza_freak:debug", "updated user's orders {:?}", user.orders);
     let mut changes = vec![];
     for mut order in user.orders.iter_mut() {
         let new_status = get_order_status(&order.order_tracker_link)?;
@@ -107,6 +110,7 @@ fn update_orders(user: &mut User) -> Result<(), Error> {
 }
 
 fn send_update(msg: &str, ph: &str, email_suffix: &str) -> Result<(), Error> {
+    debug!(target: "pizza_freak:debug", "sending update: {}", msg);
     let address = format!("{}@{}", ph, email_suffix);
     let id = format!("{}", Local::now().timestamp_millis());
     let msg = SimpleSendableEmail::new(
@@ -128,8 +132,10 @@ fn get_order_list(phone_number: &str) -> Result<OrderListResponse, Error> {
     Ok(ret)
 }
 fn get_order_status(url: &str) -> Result<OrderStatus, Error> {
+    debug!(target: "pizza_freak:debug", "getting order status");
     let html = get(url)?.text()?;
     let status = extract_order_status(html)?;
+    debug!(target: "pizza_freak:debug", "order status: {}", status);
     Ok(status)
 }
 fn extract_order_status(html: String) -> Result<OrderStatus, Error> {

@@ -95,7 +95,7 @@ fn update_orders(user: &mut User) -> Result<(), Error> {
     }
     debug!(target: "pizza_freak:debug", "updated user's orders {:?}", user.orders);
     let mut changes = vec![];
-    for mut order in user.orders.iter_mut() {
+    for ref mut order in user.orders.iter_mut() {
         let new_status = get_order_status(&order.order_tracker_link)?;
         debug!(target: "pizza_freak:debug", "old_status: {:?}, new_status: {:?}", order.status, new_status);
         if new_status != order.status {

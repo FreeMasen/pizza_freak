@@ -97,6 +97,7 @@ fn update_orders(user: &mut User) -> Result<(), Error> {
     let mut changes = vec![];
     for mut order in user.orders.iter_mut() {
         let new_status = get_order_status(&order.order_tracker_link)?;
+        debug!(target: "pizza_freak:debug", "old_status: {:?}, new_status: {:?}", order.status, new_status);
         if new_status != order.status {
             changes.push((order.order_id, new_status));
         }
@@ -230,7 +231,7 @@ impl ::std::fmt::Display for OrderStatus {
         match self {
             OrderStatus::Deferred => write!(f, "Deferred, The store might not be open?"),
             OrderStatus::Reviewing => write!(f, "Reviewing, Management is checking things over apparently"),
-            OrderStatus::Pending => write!(f, "Pending, Not yet being made but not help up by anything"),
+            OrderStatus::Pending => write!(f, "Pending, Not yet being made but not held up by anything"),
             OrderStatus::Cooking => write!(f, "The cooks are working on your order now!"),
             OrderStatus::OutForDelivery => write!(f, "The driver is heading to your house!"),
             OrderStatus::Delivered => write!(f, "You are eating pizza!"),

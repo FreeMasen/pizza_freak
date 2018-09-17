@@ -44,14 +44,24 @@ fn main() -> Result<(), Error> {
     loop {
         let mut errored = false;
         for mut user in users.iter_mut() {
-            match update_orders(user, &config.from_addr) {
-                Ok(_) => {
+            let changes = match update_orders(user) {
+                Ok(changes) => {
                     info!(target: "pizza_freak:info", "Successfully updated orders for {}", user.name);
+                    changes
                 },
                 Err(e) => {
                     errored = true;
                     error!(target: "pizza_freak:error", "Error updating orders for {}: {}", user.name, e);
+                    vec![]
                 },
+            };
+            info!(target: "pizza_freak:info", "Sending {} updates", changes.len());
+            match send_updates(changes, &config.from_addr, &user.phone_number, &user.phone_email_url) {
+                Ok(()) => info!(target: "pizza_freak:info", "Successfully sent updates"),
+                Err(e) => {
+                    error!(target: "pizza_freak:error", "Error sending updates to {}: {}", &user.name, e);
+                    errored = true;
+                }
             }
         }
         if errored {
@@ -82,7 +92,7 @@ fn init_logging() {
     b.init();
 }
 
-fn update_orders(user: &mut User, from_addr: &str) -> Result<(), Error> {
+fn update_orders(user: &mut User) -> Result<Vec<(i32, OrderStatus)>, Error> {
     debug!(target: "pizza_freak:debug", "updating orders for {}", user.name);
     let result = get_order_list(&user.phone_number.dashes_string())?;
     debug!(target: "pizza_freak:debug", "got orders from phone numbers");
@@ -95,27 +105,40 @@ fn update_orders(user: &mut User, from_addr: &str) -> Result<(), Error> {
     }
     debug!(target: "pizza_freak:debug", "updated user's orders {:?}", user.orders);
     let mut changes = vec![];
-    for (i, order) in user.orders.iter().enumerate() {
+    for order in user.orders.iter_mut() {
         let new_status = get_order_status(&order.order_tracker_link)?;
         debug!(target: "pizza_freak:debug", "old_status: {:?}, new_status: {:?}", order.status, new_status);
         if new_status != order.status {
-            changes.push((i, new_status));
+            //We need to store the changes in a vec because this
+            //loop mutably borrows the user object through the orders property
+            //once we are done updating the user's order's statuses then we can
+            //send out the updates
+            changes.push((order.order_id, new_status));
+            order.status = new_status;
         }
     }
-    for (i, new_status) in changes {
-        user.orders[i].status = new_status;
+
+    //signed duration since takes a datetime object by value, because of this it makes more
+    //sense to pass Local::now() to the order's time and get back the negative duration
+    //since the duration will be negative we would need to compare it with <= the duration of
+    //negative one day
+    user.orders.retain(|o| o.time_ordered.signed_duration_since(Local::now()) <= Duration::days(-1));
+    Ok(changes)
+}
+
+fn send_updates(changes: Vec<(i32, OrderStatus)>, from_addr: &str, ph: &PhoneNumber, email_suffix: &str) -> Result<(), Error> {
+    for (id, new_status) in changes {
         send_update(&format!("Pizza Freak Order #{}\n{}",
-                                user.orders[i].order_id,
+                                id,
                                 new_status),
                     from_addr,
-                    &user.phone_number.to_string(),
-                    &user.phone_email_url)?;
+                    ph.to_string(),
+                    email_suffix)?;
     }
-    user.orders.retain(|o| o.time_ordered.signed_duration_since(Local::now()) > Duration::days(1));
     Ok(())
 }
 
-fn send_update(msg: &str, from_addr: &str, ph: &str, email_suffix: &str) -> Result<(), Error> {
+fn send_update(msg: &str, from_addr: &str, ph: String, email_suffix: &str) -> Result<(), Error> {
     debug!(target: "pizza_freak:debug", "sending update: {}", msg);
     let address = format!("{}@{}", ph, email_suffix);
     let id = format!("{}", Local::now().timestamp_millis());

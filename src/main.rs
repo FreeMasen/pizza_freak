@@ -44,7 +44,7 @@ fn main() -> Result<(), Error> {
     loop {
         let mut errored = false;
         for mut user in users.iter_mut() {
-            match update_orders(user) {
+            match update_orders(user, &config.from_addr) {
                 Ok(_) => {
                     info!(target: "pizza_freak:info", "Successfully updated orders for {}", user.name);
                 },
@@ -82,7 +82,7 @@ fn init_logging() {
     b.init();
 }
 
-fn update_orders(user: &mut User) -> Result<(), Error> {
+fn update_orders(user: &mut User, from_addr: &str) -> Result<(), Error> {
     debug!(target: "pizza_freak:debug", "updating orders for {}", user.name);
     let result = get_order_list(&user.phone_number.dashes_string())?;
     debug!(target: "pizza_freak:debug", "got orders from phone numbers");
@@ -95,27 +95,32 @@ fn update_orders(user: &mut User) -> Result<(), Error> {
     }
     debug!(target: "pizza_freak:debug", "updated user's orders {:?}", user.orders);
     let mut changes = vec![];
-    for ref mut order in user.orders.iter_mut() {
+    for (i, order) in user.orders.iter().enumerate() {
         let new_status = get_order_status(&order.order_tracker_link)?;
         debug!(target: "pizza_freak:debug", "old_status: {:?}, new_status: {:?}", order.status, new_status);
         if new_status != order.status {
-            changes.push((order.order_id, new_status));
+            changes.push((i, new_status));
         }
-        order.status = new_status;
     }
-    for change in changes {
-        send_update(&format!("Pizza Freak Order #{}\n{}", change.0, change.1), &user.phone_number.to_string(), &user.phone_email_url)?;
+    for (i, new_status) in changes {
+        user.orders[i].status = new_status;
+        send_update(&format!("Pizza Freak Order #{}\n{}",
+                                user.orders[i].order_id,
+                                new_status),
+                    from_addr,
+                    &user.phone_number.to_string(),
+                    &user.phone_email_url)?;
     }
     user.orders.retain(|o| o.time_ordered.signed_duration_since(Local::now()) > Duration::days(1));
     Ok(())
 }
 
-fn send_update(msg: &str, ph: &str, email_suffix: &str) -> Result<(), Error> {
+fn send_update(msg: &str, from_addr: &str, ph: &str, email_suffix: &str) -> Result<(), Error> {
     debug!(target: "pizza_freak:debug", "sending update: {}", msg);
     let address = format!("{}@{}", ph, email_suffix);
     let id = format!("{}", Local::now().timestamp_millis());
     let msg = SimpleSendableEmail::new(
-                "rfm@robertmasen.pizza".to_string(),
+                from_addr.to_string(),
                 &[address],
                 id,
                 msg.to_string(),
@@ -132,6 +137,7 @@ fn get_order_list(phone_number: &str) -> Result<OrderListResponse, Error> {
     let ret = serde_json::from_str(&text)?;
     Ok(ret)
 }
+
 fn get_order_status(url: &str) -> Result<OrderStatus, Error> {
     debug!(target: "pizza_freak:debug", "getting order status");
     let html = get(url)?.text()?;
@@ -139,6 +145,7 @@ fn get_order_status(url: &str) -> Result<OrderStatus, Error> {
     debug!(target: "pizza_freak:debug", "order status: {}", status);
     Ok(status)
 }
+
 fn extract_order_status(html: String) -> Result<OrderStatus, Error> {
     let p = html5ever::parse_document(html5ever::rcdom::RcDom::default(),
                                             html5ever::ParseOpts::default())
@@ -202,6 +209,7 @@ fn convert_children(parent: Handle) -> Vec<DomNode> {
     }
     ret
 }
+
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq)]
 #[repr(u8)]
 enum OrderStatus {
@@ -239,7 +247,6 @@ impl ::std::fmt::Display for OrderStatus {
         }
     }
 }
-
 
 #[derive(Debug, Clone)]
 enum DomNode {
@@ -385,6 +392,7 @@ struct Config {
     pub users: Vec<User>,
     pub check_address: String,
     pub consecutive_errors_limit: usize,
+    pub from_addr: String,
 }
 
 #[derive(Deserialize, Clone)]

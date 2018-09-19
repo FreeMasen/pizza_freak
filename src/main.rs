@@ -44,14 +44,14 @@ fn main() -> Result<(), Error> {
     loop {
         let mut errored = false;
         for mut user in users.iter_mut() {
-            let changes = match update_orders(user) {
+            let changes = match update_orders(user, &config.check_address) {
                 Ok(changes) => {
-                    info!(target: "pizza_freak:info", "Successfully updated orders for {}", user.name);
+                    info!(target: "pizza_freak:info", "Successfully updated orders for {}, found {} changes", user.name, changes.len());
                     changes
                 },
                 Err(e) => {
                     errored = true;
-                    error!(target: "pizza_freak:error", "Error updating orders for {}: {}", user.name, e);
+                    error!(target: "pizza_freak:error", "Error updating orders for {}: {:?}", user.name, e);
                     vec![]
                 },
             };
@@ -92,9 +92,23 @@ fn init_logging() {
     b.init();
 }
 
-fn update_orders(user: &mut User) -> Result<Vec<(i32, OrderStatus)>, Error> {
+fn update_orders(user: &mut User, check_addr: &str) -> Result<Vec<(i32, OrderStatus)>, Error> {
     debug!(target: "pizza_freak:debug", "updating orders for {}", user.name);
-    let result = get_order_list(&user.phone_number.dashes_string())?;
+    println!("starting orders: {:#?}", user.orders);
+    let start_len = user.orders.len();
+    user.orders.retain(|o|{
+        let dur = Local::now().signed_duration_since(o.time_ordered.clone());
+        let twelve = Duration::hours(12);
+        if dur > twelve && o.status == OrderStatus::Delivered {
+            debug!(target: "pizza_freak:debug", "Order is older than 12 hours and complete");
+            false
+        } else {
+            debug!(target: "pizza_freak:debug", "Order is either younger than 12 hours or is not yet complete");
+            true
+        }
+    });
+    debug!(target: "pizza_freak:debug", "removed {} old orders", start_len - user.orders.len());
+    let result = get_order_list(check_addr, &user.phone_number.dashes_string())?;
     debug!(target: "pizza_freak:debug", "got orders from phone numbers");
     if let Response::List(orders) = result.response {
         for order in orders {
@@ -118,22 +132,18 @@ fn update_orders(user: &mut User) -> Result<Vec<(i32, OrderStatus)>, Error> {
         }
     }
 
-    //signed duration since takes a datetime object by value, because of this it makes more
-    //sense to pass Local::now() to the order's time and get back the negative duration
-    //since the duration will be negative we would need to compare it with <= the duration of
-    //negative one day
-    user.orders.retain(|o| o.time_ordered.signed_duration_since(Local::now()) <= Duration::days(-1));
     Ok(changes)
 }
 
 fn send_updates(changes: Vec<(i32, OrderStatus)>, from_addr: &str, ph: &PhoneNumber, email_suffix: &str) -> Result<(), Error> {
     for (id, new_status) in changes {
-        send_update(&format!("Pizza Freak Order #{}\n{}",
-                                id,
-                                new_status),
-                    from_addr,
-                    ph.to_string(),
-                    email_suffix)?;
+        println!("send update {}, {}", id, new_status);
+        // send_update(&format!("Pizza Freak Order #{}\n{}",
+        //                         id,
+        //                         new_status),
+        //             from_addr,
+        //             ph.to_string(),
+        //             email_suffix)?;
     }
     Ok(())
 }
@@ -154,15 +164,15 @@ fn send_update(msg: &str, from_addr: &str, ph: String, email_suffix: &str) -> Re
     Ok(())
 }
 
-fn get_order_list(phone_number: &str) -> Result<OrderListResponse, Error> {
-    let mut res = get(&format!("https://downtown.pizzaluce.com/ws/ordertracker/orders?phone={}", phone_number))?;
+fn get_order_list(url_base: &str, phone_number: &str) -> Result<OrderListResponse, Error> {
+    let mut res = get("http://localhost:8888")?;//&format!("{}{}", url_base, phone_number))?;
     let text = res.text()?;
     let ret = serde_json::from_str(&text)?;
     Ok(ret)
 }
 
 fn get_order_status(url: &str) -> Result<OrderStatus, Error> {
-    debug!(target: "pizza_freak:debug", "getting order status");
+    debug!(target: "pizza_freak:debug", "getting order status from {}", url);
     let html = get(url)?.text()?;
     let status = extract_order_status(html)?;
     debug!(target: "pizza_freak:debug", "order status: {}", status);
@@ -246,6 +256,7 @@ enum OrderStatus {
 }
 
 fn determine_status(val: &str) -> OrderStatus {
+    debug!(target: "pizza_freak:debug", "determine_status {}", val);
     match val {
         "0" => OrderStatus::Deferred,
         "1" => OrderStatus::Reviewing,

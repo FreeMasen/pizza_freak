@@ -510,7 +510,7 @@ enum Error {
     #[cfg(feature = "email")]
     Email(lettre::Error),
     #[cfg(feature = "email")]
-    Stmp(lettre::stmp::Error),
+    Stmp(lettre::smtp::error::Error),
     Io(::std::io::Error),
     Toml(toml::de::Error),
 }

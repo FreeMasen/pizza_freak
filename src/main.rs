@@ -2,6 +2,7 @@ extern crate chrono;
 extern crate dirs;
 extern crate env_logger;
 extern crate html5ever;
+#[cfg(feature = "email")]
 extern crate lettre;
 #[macro_use]
 extern crate log;
@@ -28,6 +29,7 @@ use html5ever::{
         Handle
     }
 };
+#[cfg(feature = "email")]
 use lettre::{
     SimpleSendableEmail,
     EmailTransport,
@@ -134,20 +136,18 @@ fn update_orders(user: &mut User, check_addr: &str) -> Result<Vec<(i32, OrderSta
 
     Ok(changes)
 }
-
 fn send_updates(changes: Vec<(i32, OrderStatus)>, from_addr: &str, ph: &PhoneNumber, email_suffix: &str) -> Result<(), Error> {
     for (id, new_status) in changes {
-        println!("send update {}, {}", id, new_status);
-        // send_update(&format!("Pizza Freak Order #{}\n{}",
-        //                         id,
-        //                         new_status),
-        //             from_addr,
-        //             ph.to_string(),
-        //             email_suffix)?;
+        send_update(&format!("Pizza Freak Order #{}\n{}",
+                                id,
+                                new_status),
+                    from_addr,
+                    ph.to_string(),
+                    email_suffix)?;
     }
     Ok(())
 }
-
+#[cfg(feature = "email")]
 fn send_update(msg: &str, from_addr: &str, ph: String, email_suffix: &str) -> Result<(), Error> {
     debug!(target: "pizza_freak:debug", "sending update: {}", msg);
     let address = format!("{}@{}", ph, email_suffix);
@@ -163,9 +163,15 @@ fn send_update(msg: &str, from_addr: &str, ph: String, email_suffix: &str) -> Re
     mailer.send(&msg)?;
     Ok(())
 }
+#[cfg(not(feature = "email"))]
+fn send_update(msg: &str, from_addr: &str, ph: String, email_suffix: &str) -> Result<(), Error> {
+    debug!(target: "pizza_freak:debug", "sending update: {}", msg);
+    debug!(target: "pizza_freak:debug", "from: {}, to {}@{}, content: {}", from_addr, ph, email_suffix, msg);
+    Ok(())
+}
 
 fn get_order_list(url_base: &str, phone_number: &str) -> Result<OrderListResponse, Error> {
-    let mut res = get("http://localhost:8888")?;//&format!("{}{}", url_base, phone_number))?;
+    let mut res = get(&format!("{}{}", url_base, phone_number))?;
     let text = res.text()?;
     let ret = serde_json::from_str(&text)?;
     Ok(ret)
@@ -501,8 +507,10 @@ enum Error {
     Time(chrono::ParseError),
     Other(String),
     Parse(::std::num::ParseIntError),
+    #[cfg(feature = "email")]
     Email(lettre::Error),
-    Stmp(lettre::smtp::error::Error),
+    #[cfg(feature = "email")]
+    Stmp(lettre::stmp::Error),
     Io(::std::io::Error),
     Toml(toml::de::Error),
 }
@@ -516,7 +524,9 @@ impl ::std::fmt::Display for Error {
             Error::Other(ref e) => e.fmt(f),
             Error::Parse(ref e) => e.fmt(f),
             Error::Io(ref e) => e.fmt(f),
+            #[cfg(feature = "email")]
             Error::Email(ref e) => e.fmt(f),
+            #[cfg(feature = "email")]
             Error::Stmp(ref e) => e.fmt(f),
             Error::Toml(ref e) => e.fmt(f),
         }
@@ -554,12 +564,13 @@ impl From<::std::io::Error> for Error {
         Error::Io(other)
     }
 }
-
+#[cfg(feature = "email")]
 impl From<lettre::Error> for Error {
     fn from(other: lettre::Error) -> Self {
         Error::Email(other)
     }
 }
+#[cfg(feature = "email")]
 impl From<lettre::smtp::error::Error> for Error {
     fn from(other: lettre::smtp::error::Error) -> Self {
         Error::Stmp(other)

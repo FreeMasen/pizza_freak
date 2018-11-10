@@ -254,7 +254,6 @@ fn convert_children(parent: Handle) -> Vec<DomNode> {
 enum OrderStatus {
     Deferred,
     Reviewing,
-    Pending,
     Cooking,
     OutForDelivery,
     Delivered,
@@ -266,8 +265,7 @@ fn determine_status(val: &str) -> OrderStatus {
     match val {
         "0" => OrderStatus::Deferred,
         "1" => OrderStatus::Reviewing,
-        "2" => OrderStatus::Pending,
-        "3" => OrderStatus::Cooking,
+        "2" | "3" => OrderStatus::Cooking,
         "4" => OrderStatus::OutForDelivery,
         "5" => OrderStatus::Delivered,
         _ => OrderStatus::Unknown,
@@ -279,7 +277,6 @@ impl ::std::fmt::Display for OrderStatus {
         match self {
             OrderStatus::Deferred => write!(f, "Deferred, The store might not be open?"),
             OrderStatus::Reviewing => write!(f, "Reviewing, Management is checking things over apparently"),
-            OrderStatus::Pending => write!(f, "Pending, Not yet being made but not held up by anything"),
             OrderStatus::Cooking => write!(f, "The cooks are working on your order now!"),
             OrderStatus::OutForDelivery => write!(f, "The driver is heading to your house!"),
             OrderStatus::Delivered => write!(f, "You are eating pizza!"),

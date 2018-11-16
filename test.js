@@ -5,12 +5,36 @@ let orders = [];
 const OrderStatus = Object.freeze({
     Deferred: 0,
     Reviewing: 1,
-    Pending: 2,
     Cooking: 3,
     OutForDelivery: 4,
     Delivered: 5,
     Unknown: 6,
 });
+
+function imageForStatus(status) {
+    let ret = "/webfile?name=order-tracker-"
+    switch (status) {
+        case OrderStatus.Deferred:
+            ret += "deferred.png";
+            break;
+            case OrderStatus.Reviewing:
+            ret += "reviewing.png";
+            break;
+        case OrderStatus.Cooking:
+            ret += "cooking.png";
+            break;
+        case OrderStatus.OutForDelivery:
+            ret += "driving.png";
+            break;
+        case OrderStatus.Delivered:
+            ret += "delivered.png";
+            break;
+        case OrderStatus.Unknown:
+            ret += "unknown.png";
+            break;
+    }
+    return ret;
+} 
 
 class Order {
     constructor(id, time, status = OrderStatus.Unknown) {
@@ -23,6 +47,7 @@ class Order {
         return {
             orderId: this.orderId,
             orderTrackerLink: this.orderTrackerLink,
+            orderStatusImage: imageForStatus(this.status),
             timeOrdered: this.timeOrdered,
         }
     }
@@ -70,7 +95,12 @@ app.get('/order/:id', (req, res) => {
 
 app.get('/', (req, res) => {
     console.log('get ', req.path);
-    res.send(JSON.stringify(new OrderListResponse(orders)))
+    res.send(JSON.stringify(new OrderListResponse(orders)));
+    for (order of orders) {
+        if (shouldChange() || order.status == OrderStatus.Unknown) {
+            order.nextStatus();
+        }
+    }
 });
 
 function html(status) {
@@ -82,4 +112,5 @@ app.listen(8888, err => {
     orders.push(new Order(1, "Tue 18 Sep 2018 12:00:00", OrderStatus.Delivered)),
     orders.push(new Order(2, "Tue 19 Sep 2018 15:10:00"))
     console.log('Listening on 8888');
-})
+});
+

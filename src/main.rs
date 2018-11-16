@@ -1,7 +1,6 @@
 extern crate chrono;
 extern crate dirs;
 extern crate env_logger;
-extern crate html5ever;
 #[cfg(feature = "email")]
 extern crate lettre;
 #[macro_use]
@@ -14,7 +13,6 @@ extern crate serde_json;
 extern crate toml;
 
 use std::default::Default;
-use std::collections::HashMap;
 
 use chrono::{
     DateTime,
@@ -22,13 +20,7 @@ use chrono::{
     Duration
 };
 use dirs::home_dir;
-use html5ever::{
-    tendril::TendrilSink,
-    rcdom::{
-        NodeData,
-        Handle
-    }
-};
+
 #[cfg(feature = "email")]
 use lettre::{
     SimpleSendableEmail,
@@ -48,20 +40,20 @@ fn main() -> Result<(), Error> {
         for mut user in users.iter_mut() {
             let changes = match update_orders(user, &config.check_address) {
                 Ok(changes) => {
-                    info!(target: "pizza_freak:info", "Successfully updated orders for {}, found {} changes", user.name, changes.len());
+                    info!("Successfully updated orders for {}, found {} changes", user.name, changes.len());
                     changes
                 },
                 Err(e) => {
                     errored = true;
-                    error!(target: "pizza_freak:error", "Error updating orders for {}: {:?}", user.name, e);
+                    error!("Error updating orders for {}: {:?}", user.name, e);
                     vec![]
                 },
             };
-            info!(target: "pizza_freak:info", "Sending {} updates", changes.len());
+            info!("Sending {} updates", changes.len());
             match send_updates(changes, &config.from_addr, &user.phone_number, &user.phone_email_url) {
                 Ok(()) => info!(target: "pizza_freak:info", "Successfully sent updates"),
                 Err(e) => {
-                    error!(target: "pizza_freak:error", "Error sending updates to {}: {}", &user.name, e);
+                    error!("Error sending updates to {}: {}", &user.name, e);
                     errored = true;
                 }
             }
@@ -72,7 +64,7 @@ fn main() -> Result<(), Error> {
             consecutive_errors = 0;
         }
         if consecutive_errors > config.consecutive_errors_limit {
-            error!(target: "pizza_freak:error", "Too many consecutive errors, exiting program");
+            error!("Too many consecutive errors, exiting program");
             break;
         }
         ::std::thread::sleep(::std::time::Duration::from_millis(config.check_interval as u64))
@@ -95,45 +87,47 @@ fn init_logging() {
 }
 
 fn update_orders(user: &mut User, check_addr: &str) -> Result<Vec<(i32, OrderStatus)>, Error> {
-    debug!(target: "pizza_freak:debug", "updating orders for {}", user.name);
-    println!("starting orders: {:#?}", user.orders);
+    debug!("updating orders for {}", user.name);
+    info!("starting orders: {:#?}", user.orders);
     let start_len = user.orders.len();
     user.orders.retain(|o|{
         let dur = Local::now().signed_duration_since(o.time_ordered.clone());
         let twelve = Duration::hours(12);
-        if dur > twelve && o.status == OrderStatus::Delivered {
-            debug!(target: "pizza_freak:debug", "Order is older than 12 hours and complete");
+        if dur > twelve {
+            debug!("Order is older than 12 hours and complete");
             false
         } else {
-            debug!(target: "pizza_freak:debug", "Order is either younger than 12 hours or is not yet complete");
+            debug!("Order is either younger than 12 hours or is not yet complete");
             true
         }
     });
-    debug!(target: "pizza_freak:debug", "removed {} old orders", start_len - user.orders.len());
+    debug!("removed {} old orders", start_len - user.orders.len());
     let result = get_order_list(check_addr, &user.phone_number.dashes_string())?;
-    debug!(target: "pizza_freak:debug", "got orders from phone numbers");
+    debug!("got orders from phone numbers");
+    let mut changes = vec![];
     if let Response::List(orders) = result.response {
-        for order in orders {
-            if !user.orders.iter().any(|o| o == &order) {
+        'order_loop: for order in orders {
+            let mut order_not_found = true;
+            'user_loop: for user_order in user.orders.iter_mut() {
+                if user_order.order_id == order.order_id {
+                    debug!("Updating orders status");
+                    user_order.order_status_image = order.order_status_image.clone();
+                    order_not_found = false;
+                    if user_order.update_status() && (
+                        user_order.status == OrderStatus::Cooking
+                        || user_order.status == OrderStatus::OutForDelivery
+                    ) {
+                        changes.push((user_order.order_id, user_order.status));
+                    }
+                    break 'user_loop;
+                }
+            }
+            if order_not_found {
+                debug!("order not found, inserting new order");
                 user.orders.push(order);
             }
         }
     }
-    debug!(target: "pizza_freak:debug", "updated user's orders {:?}", user.orders);
-    let mut changes = vec![];
-    for order in user.orders.iter_mut() {
-        let new_status = get_order_status(&order.order_tracker_link)?;
-        debug!(target: "pizza_freak:debug", "old_status: {:?}, new_status: {:?}", order.status, new_status);
-        if new_status != order.status {
-            //We need to store the changes in a vec because this
-            //loop mutably borrows the user object through the orders property
-            //once we are done updating the user's order's statuses then we can
-            //send out the updates
-            changes.push((order.order_id, new_status));
-            order.status = new_status;
-        }
-    }
-
     Ok(changes)
 }
 fn send_updates(changes: Vec<(i32, OrderStatus)>, from_addr: &str, ph: &PhoneNumber, email_suffix: &str) -> Result<(), Error> {
@@ -149,7 +143,7 @@ fn send_updates(changes: Vec<(i32, OrderStatus)>, from_addr: &str, ph: &PhoneNum
 }
 #[cfg(feature = "email")]
 fn send_update(msg: &str, from_addr: &str, ph: String, email_suffix: &str) -> Result<(), Error> {
-    debug!(target: "pizza_freak:debug", "sending update: {}", msg);
+    debug!("sending update: {}", msg);
     let address = format!("{}@{}", ph, email_suffix);
     let id = format!("{}", Local::now().timestamp_millis());
     let msg = SimpleSendableEmail::new(
@@ -165,88 +159,17 @@ fn send_update(msg: &str, from_addr: &str, ph: String, email_suffix: &str) -> Re
 }
 #[cfg(not(feature = "email"))]
 fn send_update(msg: &str, from_addr: &str, ph: String, email_suffix: &str) -> Result<(), Error> {
-    debug!(target: "pizza_freak:debug", "sending update: {}", msg);
-    debug!(target: "pizza_freak:debug", "from: {}, to {}@{}, content: {}", from_addr, ph, email_suffix, msg);
+    debug!("sending update: {}", msg);
+    debug!("from: {}, to {}@{}, content: {}", from_addr, ph, email_suffix, msg);
     Ok(())
 }
 
 fn get_order_list(url_base: &str, phone_number: &str) -> Result<OrderListResponse, Error> {
     let mut res = get(&format!("{}{}", url_base, phone_number))?;
     let text = res.text()?;
+    trace!("json text:\n{:?}", text);
     let ret = serde_json::from_str(&text)?;
     Ok(ret)
-}
-
-fn get_order_status(url: &str) -> Result<OrderStatus, Error> {
-    debug!(target: "pizza_freak:debug", "getting order status from {}", url);
-    let html = get(url)?.text()?;
-    let status = extract_order_status(html)?;
-    debug!(target: "pizza_freak:debug", "order status: {}", status);
-    Ok(status)
-}
-
-fn extract_order_status(html: String) -> Result<OrderStatus, Error> {
-    let p = html5ever::parse_document(html5ever::rcdom::RcDom::default(),
-                                            html5ever::ParseOpts::default())
-                        .from_utf8()
-                        .read_from(&mut html.as_bytes())?;
-    let dom = convert(p.document);
-    if let Some(current_step) = dom.get_element_by_id("currentStep") {
-        if let DomNode::Element(mut current_step) = current_step {
-            let inner_text = current_step.children.pop().ok_or(Error::Other(String::from("Current Step DOM node needs at least 1 child")))?;
-            match inner_text {
-                DomNode::Text(val) => Ok(determine_status(&val)),
-                _ => Err(Error::Other(String::from("First child of current step node must be a text node"))),
-            }
-        } else {
-            Err(Error::Other(format!("Current step must be an element, not just raw text")))
-        }
-    } else {
-        Err(Error::Other(String::from("Unable to find current step in the dom")))
-    }
-}
-
-fn convert(handle: Handle) -> DomNode {
-    let mut ret = DomNode::Text(String::from("unparsed"));
-    for child in handle.children.borrow().iter() {
-        match child.data {
-            NodeData::Element { ref name, ref attrs, ..} => {
-                let name_str = format!("{}", name.local);
-                if name_str == "html" {
-                    ret = DomNode::Element(HTMLElement {
-                        name: name_str,
-                        attributes: attrs.borrow().iter().map(|a| (format!("{}", a.name.local), format!("{}", a.value))).collect(),
-                        children: convert_children(handle.clone()),
-                    })
-                }
-            },
-            _ => ()
-        }
-    }
-    ret
-}
-
-fn convert_children(parent: Handle) -> Vec<DomNode> {
-    let mut ret = vec![];
-    for child in parent.children.borrow().iter() {
-        match child.data {
-            NodeData::Element { ref name, ref attrs, ..} => {
-                let name = format!("{}", name.local);
-                let attributes = attrs.borrow().iter().map(|a| (format!("{}", a.name.local), format!("{}", a.value))).collect();
-                let children = convert_children(child.clone());
-                ret.push(DomNode::Element(HTMLElement {
-                    name,
-                    attributes,
-                    children
-                }))
-            },
-            NodeData::Text { ref contents } => {
-                ret.push(DomNode::Text(escape_default(&contents.borrow())))
-            },
-            _ => ()
-        }
-    }
-    ret
 }
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq)]
@@ -262,13 +185,18 @@ enum OrderStatus {
 
 fn determine_status(val: &str) -> OrderStatus {
     debug!(target: "pizza_freak:debug", "determine_status {}", val);
-    match val {
-        "0" => OrderStatus::Deferred,
-        "1" => OrderStatus::Reviewing,
-        "2" | "3" => OrderStatus::Cooking,
-        "4" => OrderStatus::OutForDelivery,
-        "5" => OrderStatus::Delivered,
-        _ => OrderStatus::Unknown,
+    if val.contains("webfile?name=order-tracker-driving.png") {
+        OrderStatus::OutForDelivery
+    } else if val.contains("webfile?name=order-tracker-cooking.png") {
+        OrderStatus::Cooking
+    } else if val.contains("webfile?name=order-tracker-delivered.png") {
+        OrderStatus::Delivered
+    } else if val.contains("webfile?name=order-tracker-reviewing.png") {
+        OrderStatus::Reviewing
+    } else if val.contains("webfile?name=order-tracker-deferred.png") {
+        OrderStatus::Deferred
+    } else {
+        OrderStatus::Unknown
     }
 }
 
@@ -285,49 +213,49 @@ impl ::std::fmt::Display for OrderStatus {
     }
 }
 
-#[derive(Debug, Clone)]
-enum DomNode {
-    Text(String),
-    Element(HTMLElement),
-}
+// #[derive(Debug, Clone)]
+// enum DomNode {
+//     Text(String),
+//     Element(HTMLElement),
+// }
 
-#[derive(Debug, Clone)]
-struct HTMLElement {
-    name: String,
-    attributes: HashMap<String, String>,
-    children: Vec<DomNode>
-}
+// #[derive(Debug, Clone)]
+// struct HTMLElement {
+//     name: String,
+//     attributes: HashMap<String, String>,
+//     children: Vec<DomNode>
+// }
 
-impl DomNode {
-    fn get_element_by_id(&self, id: &str) -> Option<DomNode> {
-        match self {
-            DomNode::Text(_) => None,
-            DomNode::Element(ref el) => if el.has_id(id) {
-                Some(self.clone())
-            } else {
-                el.get_element_by_id(id)
-            }
-        }
-    }
-}
+// impl DomNode {
+//     fn get_element_by_id(&self, id: &str) -> Option<DomNode> {
+//         match self {
+//             DomNode::Text(_) => None,
+//             DomNode::Element(ref el) => if el.has_id(id) {
+//                 Some(self.clone())
+//             } else {
+//                 el.get_element_by_id(id)
+//             }
+//         }
+//     }
+// }
 
-impl HTMLElement {
-    fn has_id(&self, id: &str) -> bool {
-        if let Some(my_id) = self.attributes.get("id") {
-            my_id == id
-        } else {
-            false
-        }
-    }
-    fn get_element_by_id(&self, id: &str) -> Option<DomNode> {
-        for node in self.children.iter() {
-            if let Some(ret) = node.get_element_by_id(id) {
-                return Some(ret)
-            }
-        }
-        None
-    }
-}
+// impl HTMLElement {
+//     fn has_id(&self, id: &str) -> bool {
+//         if let Some(my_id) = self.attributes.get("id") {
+//             my_id == id
+//         } else {
+//             false
+//         }
+//     }
+//     fn get_element_by_id(&self, id: &str) -> Option<DomNode> {
+//         for node in self.children.iter() {
+//             if let Some(ret) = node.get_element_by_id(id) {
+//                 return Some(ret)
+//             }
+//         }
+//         None
+//     }
+// }
 
 pub fn escape_default(s: &str) -> String {
     s.chars().flat_map(|c| c.escape_default()).collect()
@@ -362,6 +290,16 @@ struct Order {
     time_ordered: DateTime<Local>,
     #[serde(default)]
     status: OrderStatus,
+    order_status_image: String,
+}
+
+impl Order {
+    pub fn update_status(&mut self) -> bool {
+        let old_status = self.status;
+        let new_status = determine_status(&self.order_status_image);
+        self.status = new_status;
+        old_status != new_status
+    }
 }
 
 impl ::std::cmp::PartialEq for Order {

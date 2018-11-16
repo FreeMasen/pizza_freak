@@ -1,1 +1,1 @@
-RUST_LOG=pizza_freak:debug,pizza_freak:info,pizza_freak:error cargo run
+RUST_LOG=pizzafreak=trace cargo run

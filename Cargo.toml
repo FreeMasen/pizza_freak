@@ -8,7 +8,6 @@ default = ["email"]
 email = ["lettre"]
 
 [dependencies]
-html5ever = "0.22.3"
 chrono = { version = "0.4.6", features = ["serde"] }
 reqwest = "0.8.8"
 serde = "1"

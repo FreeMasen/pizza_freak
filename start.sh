@@ -1,1 +1,1 @@
-RUST_LOG=pizza_freak:info,pizza_freak:error ./target/release/pizza_freak > ~/logs/pizza_freak.log  &
+RUST_LOG=pizza_freak=debug ./target/release/pizza_freak > ~/logs/pizza_freak.log  &

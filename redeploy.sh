@@ -9,4 +9,4 @@ else
     echo killing old pizza_freak at $PID
     kill -kill $PID
 fi
-RUST_LOG=pizza_freak:info,pizza_freak:error ./target/release/pizza_freak > ~/logs/pizza_freak.log &
+./start.sh

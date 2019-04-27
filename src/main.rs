@@ -38,23 +38,25 @@ fn main() -> Result<(), Error> {
     loop {
         let mut errored = false;
         for mut user in users.iter_mut() {
-            let changes = match update_orders(user, &config.check_address) {
-                Ok(changes) => {
-                    info!("Successfully updated orders for {}, found {} changes", user.name, changes.len());
-                    changes
-                },
-                Err(e) => {
-                    errored = true;
-                    error!("Error updating orders for {}: {:?}", user.name, e);
-                    vec![]
-                },
-            };
-            info!("Sending {} updates", changes.len());
-            match send_updates(changes, &config.from_addr, &user.phone_number, &user.phone_email_url) {
-                Ok(()) => info!(target: "pizza_freak:info", "Successfully sent updates"),
-                Err(e) => {
-                    error!("Error sending updates to {}: {}", &user.name, e);
-                    errored = true;
+            for ref address in &config.check_addresses {
+                let changes = match update_orders(user, address) {
+                    Ok(changes) => {
+                        info!("Successfully updated orders for {}, found {} changes", user.name, changes.len());
+                        changes
+                    },
+                    Err(e) => {
+                        errored = true;
+                        error!("Error updating orders for {}: {:?}", user.name, e);
+                        vec![]
+                    },
+                };
+                info!("Sending {} updates", changes.len());
+                match send_updates(changes, &config.from_addr, &user.phone_number, &user.phone_email_url) {
+                    Ok(()) => info!(target: "pizza_freak:info", "Successfully sent updates"),
+                    Err(e) => {
+                        error!("Error sending updates to {}: {}", &user.name, e);
+                        errored = true;
+                    }
                 }
             }
         }
@@ -365,7 +367,7 @@ mod date_parsing {
 struct Config {
     pub check_interval: usize,
     pub users: Vec<User>,
-    pub check_address: String,
+    pub check_addresses: Vec<String>,
     pub consecutive_errors_limit: usize,
     pub from_addr: String,
 }

@@ -37,8 +37,8 @@ fn main() -> Result<(), Error> {
     let mut consecutive_errors = 0;
     loop {
         let mut errored = false;
-        for mut user in users.iter_mut() {
-            for ref address in &config.check_addresses {
+        for user in users.iter_mut() {
+            for address in &config.check_addresses {
                 let changes = match update_orders(user, address) {
                     Ok(changes) => {
                         info!("Successfully updated orders for {}, found {} changes", user.name, changes.len());
@@ -75,7 +75,7 @@ fn main() -> Result<(), Error> {
 }
 
 fn get_config() -> Result<Config, Error> {
-    let mut config_path = home_dir().ok_or(Error::other("Unable to get home directory"))?;
+    let mut config_path = home_dir().ok_or_else(|| Error::other("Unable to get home directory"))?;
     config_path.push(".pizza_freak");
     let config_text = ::std::fs::read_to_string(config_path)?;
     let config = toml::from_str(&config_text)?;
@@ -108,9 +108,9 @@ fn update_orders(user: &mut User, check_addr: &str) -> Result<Vec<(i32, OrderSta
     debug!("got orders from phone numbers");
     let mut changes = vec![];
     if let Response::List(orders) = result.response {
-        'order_loop: for order in orders {
+        for order in orders {
             let mut order_not_found = true;
-            'user_loop: for user_order in user.orders.iter_mut() {
+            for user_order in user.orders.iter_mut() {
                 if user_order.order_id == order.order_id {
                     debug!("Updating orders status");
                     user_order.order_status_image = order.order_status_image.clone();
@@ -121,7 +121,7 @@ fn update_orders(user: &mut User, check_addr: &str) -> Result<Vec<(i32, OrderSta
                     ) {
                         changes.push((user_order.order_id, user_order.status));
                     }
-                    break 'user_loop;
+                    break;
                 }
             }
             if order_not_found {

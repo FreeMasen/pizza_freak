@@ -1,8 +1,6 @@
 extern crate chrono;
 extern crate dirs;
 extern crate env_logger;
-#[cfg(feature = "email")]
-extern crate lettre;
 #[macro_use]
 extern crate log;
 extern crate reqwest;
@@ -11,6 +9,7 @@ extern crate serde;
 extern crate serde_derive;
 extern crate serde_json;
 extern crate toml;
+extern crate cheap_alerts;
 
 use std::default::Default;
 
@@ -21,11 +20,10 @@ use chrono::{
 };
 use dirs::home_dir;
 
-#[cfg(feature = "email")]
-use lettre::{
-    SimpleSendableEmail,
-    EmailTransport,
-    SmtpTransport
+use cheap_alerts::{
+    Carrier,
+    Destination,
+    Sender,
 };
 use reqwest::get;
 
@@ -51,7 +49,7 @@ fn main() -> Result<(), Error> {
                     },
                 };
                 info!("Sending {} updates", changes.len());
-                match send_updates(changes, &config.from_addr, &user.phone_number, &user.phone_email_url) {
+                match send_updates(changes, &config.from_addr, &user.as_dest()?) {
                     Ok(()) => info!(target: "pizza_freak:info", "Successfully sent updates"),
                     Err(e) => {
                         error!("Error sending updates to {}: {}", &user.name, e);
@@ -75,10 +73,12 @@ fn main() -> Result<(), Error> {
 }
 
 fn get_config() -> Result<Config, Error> {
+    trace!("get config");
     let mut config_path = home_dir().ok_or_else(|| Error::other("Unable to get home directory"))?;
     config_path.push(".pizza_freak");
     let config_text = ::std::fs::read_to_string(config_path)?;
     let config = toml::from_str(&config_text)?;
+    trace!("{:#?}", config);
     Ok(config)
 }
 
@@ -132,37 +132,33 @@ fn update_orders(user: &mut User, check_addr: &str) -> Result<Vec<(i32, OrderSta
     }
     Ok(changes)
 }
-fn send_updates(changes: Vec<(i32, OrderStatus)>, from_addr: &str, ph: &PhoneNumber, email_suffix: &str) -> Result<(), Error> {
+fn send_updates(changes: Vec<(i32, OrderStatus)>, from_addr: &str, dest: &Destination) -> Result<(), Error> {
     for (id, new_status) in changes {
         send_update(&format!("Pizza Freak Order #{}\n{}",
                                 id,
                                 new_status),
                     from_addr,
-                    ph.to_string(),
-                    email_suffix)?;
+                    dest)?;
     }
     Ok(())
 }
+
 #[cfg(feature = "email")]
-fn send_update(msg: &str, from_addr: &str, ph: String, email_suffix: &str) -> Result<(), Error> {
+fn send_update(msg: &str, from_addr: &str, dest: &Destination) -> Result<(), Error> {
     debug!("sending update: {}", msg);
-    let address = format!("{}@{}", ph, email_suffix);
-    let id = format!("{}", Local::now().timestamp_millis());
-    let msg = SimpleSendableEmail::new(
-                from_addr.to_string(),
-                &[address],
-                id,
-                msg.to_string(),
-    )?;
-    let mut mailer =
-        SmtpTransport::builder_unencrypted_localhost()?.build();
-    mailer.send(&msg)?;
+    let mut sender = Sender::builder()
+        .address(from_addr)
+        .smtp_unencrypted_localhost()?;
+    sender.send_to(&dest, msg)?;
     Ok(())
 }
+
 #[cfg(not(feature = "email"))]
-fn send_update(msg: &str, from_addr: &str, ph: String, email_suffix: &str) -> Result<(), Error> {
-    debug!("sending update: {}", msg);
-    debug!("from: {}, to {}@{}, content: {}", from_addr, ph, email_suffix, msg);
+fn send_update(msg: &str, from_addr: &str, dest: &Destination) -> Result<(), Error> {
+    let mut sender = Sender::builder()
+        .address(from_addr)
+        .stdout()?;
+    sender.send_to(&dest, msg)?;
     Ok(())
 }
 
@@ -186,7 +182,7 @@ enum OrderStatus {
 }
 
 fn determine_status(val: &str) -> OrderStatus {
-    debug!(target: "pizza_freak:debug", "determine_status {}", val);
+    debug!("determine_status {}", val);
     if val.contains("webfile?name=order-tracker-driving.png") {
         OrderStatus::OutForDelivery
     } else if val.contains("webfile?name=order-tracker-cooking.png") {
@@ -363,7 +359,7 @@ mod date_parsing {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct Config {
     pub check_interval: usize,
     pub users: Vec<User>,
@@ -372,16 +368,25 @@ struct Config {
     pub from_addr: String,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Debug)]
 struct User {
     pub name: String,
-    pub phone_email_url: String,
+    pub carrier: String,
     pub phone_number: PhoneNumber,
     #[serde(default)]
     pub orders: Vec<Order>
 }
 
-#[derive(Clone)]
+impl User {
+    pub fn as_dest(&self) -> Result<Destination, Error> {
+        use std::str::FromStr;
+        let carrier = Carrier::from_str(&self.carrier)?;
+        let dest = Destination::new(&self.phone_number.to_string(), &carrier);
+        Ok(dest)
+    }
+}
+
+#[derive(Clone, Debug)]
 struct PhoneNumber {
     area_code: String,
     prefix: String,
@@ -412,9 +417,9 @@ impl PhoneNumber {
         }
         let suffix = String::from(&ph[suffix_start..suffix_start + 4]);
         Ok(PhoneNumber {
-            area_code: area_code,
-            prefix: prefix,
-            suffix: suffix,
+            area_code,
+            prefix,
+            suffix,
         })
     }
 
@@ -444,10 +449,7 @@ enum Error {
     Time(chrono::ParseError),
     Other(String),
     Parse(::std::num::ParseIntError),
-    #[cfg(feature = "email")]
-    Email(lettre::Error),
-    #[cfg(feature = "email")]
-    Stmp(lettre::smtp::error::Error),
+    Cheap(cheap_alerts::Error),
     Io(::std::io::Error),
     Toml(toml::de::Error),
 }
@@ -461,10 +463,7 @@ impl ::std::fmt::Display for Error {
             Error::Other(ref e) => e.fmt(f),
             Error::Parse(ref e) => e.fmt(f),
             Error::Io(ref e) => e.fmt(f),
-            #[cfg(feature = "email")]
-            Error::Email(ref e) => e.fmt(f),
-            #[cfg(feature = "email")]
-            Error::Stmp(ref e) => e.fmt(f),
+            Error::Cheap(ref e) => e.fmt(f),
             Error::Toml(ref e) => e.fmt(f),
         }
     }
@@ -501,16 +500,10 @@ impl From<::std::io::Error> for Error {
         Error::Io(other)
     }
 }
-#[cfg(feature = "email")]
-impl From<lettre::Error> for Error {
-    fn from(other: lettre::Error) -> Self {
-        Error::Email(other)
-    }
-}
-#[cfg(feature = "email")]
-impl From<lettre::smtp::error::Error> for Error {
-    fn from(other: lettre::smtp::error::Error) -> Self {
-        Error::Stmp(other)
+
+impl From<cheap_alerts::Error> for Error {
+    fn from(other: cheap_alerts::Error) -> Self {
+        Error::Cheap(other)
     }
 }
 

@@ -1,5 +1,7 @@
 PID=`getpid pizza_freak`
 cargo build #--release
+# if cargo build did not exit with
+# exit code 0, exit script
 if [ $? -ne 0 ]; then
     exit $?
 fi

@@ -161,7 +161,10 @@ fn get_order(url_base: &str, phone_number: &str) -> Result<response::Response, E
     let mut res = get(&url)?;
     let text = res.text()?;
     trace!("json text:\n{:?}", text);
-    let ret = serde_json::from_str(&text)?;
+    let ret = serde_json::from_str(&text).map_err(|e| {
+        error!("failed to deserialize json: {:?}", text);
+        e
+    })?;
     Ok(ret)
 }
 
@@ -355,5 +358,16 @@ impl Error {
 #[tracing::instrument]
     fn other(s: &str) -> Self {
         Error::Other(s.into())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    #[test]
+    fn order_deserialize() {
+        let order = include_str!("../out.json");
+        let _: response::Response = serde_json::from_str(&order).unwrap();
+
     }
 }

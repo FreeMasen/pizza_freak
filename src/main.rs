@@ -25,6 +25,7 @@ use cheap_alerts::{
 };
 use reqwest::get;
 
+#[tracing::instrument]
 fn main() -> Result<(), Error> {
     init_logging();
     let mut config = get_config()?;
@@ -72,6 +73,7 @@ fn main() -> Result<(), Error> {
     Ok(())
 }
 
+#[tracing::instrument]
 fn get_config() -> Result<Config, Error> {
     trace!("get config");
     let mut config_path = home_dir().ok_or_else(|| Error::other("Unable to get home directory"))?;
@@ -82,12 +84,14 @@ fn get_config() -> Result<Config, Error> {
     Ok(config)
 }
 
+#[tracing::instrument]
 fn init_logging() {
     let mut b = env_logger::Builder::from_default_env();
     b.target(env_logger::Target::Stdout);
     b.init();
 }
 
+#[tracing::instrument]
 fn update_order(user: &mut User, loc: &Location) -> Result<Option<response::Status>, Error> {
     debug!("updating orders for {} at {}", user.name, loc.name);
     if let Some(order) = user.order.as_mut() {
@@ -113,11 +117,24 @@ fn update_order(user: &mut User, loc: &Location) -> Result<Option<response::Stat
             }
         }
     } else {
-        Ok(None)
+        let result = get_order(&loc.url, &user.phone_number.dashes_string())?;
+        debug!("got orders from phone numbers");
+        match result {
+            response::Response::NoOrder(_r) => {
+                info!("no order found");
+                Ok(None)
+            }
+            response::Response::Order(new) => {
+                let status = new.status;
+                user.order = Some(new);
+                Ok(Some(status))
+            }
+        }
     }
 }
 
 #[cfg(feature = "email")]
+#[tracing::instrument]
 fn send_update(msg: &str, from_addr: &str, dest: &Destination) -> Result<(), Error> {
     debug!("sending update: {}", msg);
     let mut sender = Sender::builder()
@@ -128,6 +145,7 @@ fn send_update(msg: &str, from_addr: &str, dest: &Destination) -> Result<(), Err
 }
 
 #[cfg(not(feature = "email"))]
+#[tracing::instrument]
 fn send_update(msg: &str, from_addr: &str, dest: &Destination) -> Result<(), Error> {
     let mut sender = Sender::builder()
         .address(from_addr)
@@ -136,8 +154,11 @@ fn send_update(msg: &str, from_addr: &str, dest: &Destination) -> Result<(), Err
     Ok(())
 }
 
+#[tracing::instrument]
 fn get_order(url_base: &str, phone_number: &str) -> Result<response::Response, Error> {
-    let mut res = get(&format!("{}{}", url_base, phone_number))?;
+    let url = format!("{}{}", url_base, phone_number);
+    trace!("{}", url);
+    let mut res = get(&url)?;
     let text = res.text()?;
     trace!("json text:\n{:?}", text);
     let ret = serde_json::from_str(&text)?;
@@ -157,7 +178,7 @@ impl ::std::fmt::Display for response::Status {
         }
     }
 }
-
+#[tracing::instrument]
 pub fn escape_default(s: &str) -> String {
     s.chars().flat_map(|c| c.escape_default()).collect()
 }
@@ -184,7 +205,8 @@ struct User {
 }
 
 impl User {
-    pub fn as_dest(&self) -> Result<Destination, Error> {
+#[tracing::instrument]
+pub fn as_dest(&self) -> Result<Destination, Error> {
         use std::str::FromStr;
         let carrier = Carrier::from_str(&self.carrier)?;
         let dest = Destination::new(&self.phone_number.to_string(), &carrier);
@@ -200,6 +222,7 @@ struct PhoneNumber {
 }
 
 impl PhoneNumber {
+#[tracing::instrument]
     fn try_parse(ph: &str) -> Result<PhoneNumber, Error> {
         if ph.len() < 10 {
             return Err(Error::Other(format!("Phone numbers must be at least 10 digits found {}", ph.len())));
@@ -229,10 +252,12 @@ impl PhoneNumber {
         })
     }
 
+#[tracing::instrument]
     fn dashes_string(&self) -> String {
         format!("{}-{}-{}", self.area_code, self.prefix, self.suffix)
     }
 
+#[tracing::instrument]
     fn to_string(&self) -> String {
         format!("{}{}{}", self.area_code, self.prefix, self.suffix)
     }
@@ -278,48 +303,56 @@ impl ::std::fmt::Display for Error {
 impl ::std::error::Error for Error {}
 
 impl From<reqwest::Error> for Error {
+#[tracing::instrument]
     fn from(other: reqwest::Error) -> Self {
         Error::Reqwest(other)
     }
 }
 
 impl From<serde_json::Error> for Error {
+#[tracing::instrument]
     fn from(other: serde_json::Error) -> Self {
         Error::Json(other)
     }
 }
 
 impl From<chrono::ParseError> for Error {
+#[tracing::instrument]
     fn from(other: chrono::ParseError) -> Self {
         Error::Time(other)
     }
 }
 
 impl From<::std::num::ParseIntError>  for Error {
+#[tracing::instrument]
     fn from(other: ::std::num::ParseIntError) -> Self {
         Error::Parse(other)
     }
 }
 
 impl From<::std::io::Error> for Error {
+#[tracing::instrument]
     fn from(other: ::std::io::Error) -> Self {
         Error::Io(other)
     }
 }
 
 impl From<cheap_alerts::Error> for Error {
+#[tracing::instrument]
     fn from(other: cheap_alerts::Error) -> Self {
         Error::Cheap(other)
     }
 }
 
 impl From<toml::de::Error> for Error {
+#[tracing::instrument]
     fn from(other: toml::de::Error) -> Self {
         Error::Toml(other)
     }
 }
 
 impl Error {
+#[tracing::instrument]
     fn other(s: &str) -> Self {
         Error::Other(s.into())
     }

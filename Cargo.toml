@@ -2,18 +2,21 @@
 name = "pizza_freak"
 version = "0.1.0"
 authors = ["Robert Masen <r@robertmasen.pizza>"]
+edition = "2018"
 
 [dependencies]
-chrono = { version = "0.4.6", features = ["serde"] }
-reqwest = "0.8.8"
+chrono = { version = "0.4", features = ["serde"] }
+tokio = { version = "0.2", features = ["macros", "fs"] }
+reqwest = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 cheap_alerts = "0.1"
-toml = "0.4.6"
-log = "0.4.5"
-env_logger = "0.5.13"
-dirs = "1.0.3"
+toml = "0.4"
+log = "0.4"
+env_logger = "0.7"
+dirs = "1"
 tracing = { version = "0.1", features = ["attributes"] }
+tracing-futures = { version = "0.2" }
 
 
 [features]

@@ -1,14 +1,6 @@
-extern crate chrono;
-extern crate dirs;
-extern crate env_logger;
-#[macro_use]
-extern crate log;
-extern crate reqwest;
-extern crate serde;
-extern crate serde_json;
-extern crate toml;
-extern crate cheap_alerts;
 use serde::Deserialize;
+use log::{info, debug, error, trace};
+use std::collections::HashMap;
 
 mod response;
 
@@ -25,61 +17,85 @@ use cheap_alerts::{
 };
 use reqwest::get;
 
+fn main() {
+    let mut rt = tokio::runtime::Runtime::new().expect("failed to initialize tokio rt");
+    rt.block_on(amain()).unwrap();
+}
+
 #[tracing::instrument]
-fn main() -> Result<(), Error> {
+async fn amain() -> Result<(), Error> {
     init_logging();
-    let mut config = get_config()?;
-    let mut users = Vec::with_capacity(0);
-    ::std::mem::swap(&mut config.users, &mut users);
+    let mut config = get_config().await?;
     let mut consecutive_errors = 0;
+    let mut known_orders = HashMap::new();
+    let tick_interval = std::time::Duration::from_millis(config.check_interval as u64);
+    for user in &config.users {
+        known_orders.insert(user.phone_number.clone(), HashMap::new());
+    }
     loop {
-        let mut errored = false;
-        for user in users.iter_mut() {
-            for address in &config.locations {
-                let change = match update_order(user, address) {
-                    Ok(change) => {
-                        info!("Successfully updated order for {}, found {:?}", user.name, change);
-                        change
-                    },
-                    Err(e) => {
-                        errored = true;
-                        error!("Error updating orders for {}: {:?}", user.name, e);
-                        None
-                    },
-                };
-                if let Some(change) = change {
-                    info!("Sending update");
-                    match send_update(&format!("{}", change), &config.from_addr, &user.as_dest()?) {
-                        Ok(()) => info!("Successfully sent update"),
-                        Err(e) => {
-                            error!("Error sending updates to {}: {}", &user.name, e);
-                            errored = true;
+        if let Err(e) = async {
+            let next_config = get_config().await?;
+            if config != next_config {
+                config = next_config;
+            }
+            
+            for user in &config.users {
+                let ph = user.phone_number.dashes_string();
+                let orders = known_orders
+                    .entry(user.phone_number.clone())
+                    .or_insert_with(HashMap::new);
+                for location in &config.locations {
+                    let order = get_order(&location.url, &ph).await?;
+                    if let response::Response::Order(ord) = order {
+                        let status = ord.status;
+                        let id = ord.order_id.clone();
+                        let remove = {
+                            let order = orders.entry(ord.order_id.clone())
+                                .or_insert(ord);
+                            if order.status > status {
+                                send_update(&format!("{}", status), &config.from_addr, &user.as_dest()?)?;
+                                status == response::Status::Delivered
+                            } else {
+                                false
+                            }   
+                        };
+                        if remove {
+                            orders.remove(&id);
                         }
                     }
                 }
             }
-        }
-        if errored {
-            consecutive_errors += 1
+            Result::<(), Error>::Ok(())
+        }.await {
+            consecutive_errors += 1;
+            error!("Error {} in tick {}", consecutive_errors, e);
+            if consecutive_errors > config.consecutive_errors_limit {
+                std::process::exit(1);
+            } else {
+                let tick_interval = tick_interval * consecutive_errors as u32;
+                tokio::time::delay_for(tick_interval).await;
+            }
         } else {
-            consecutive_errors = 0;
+            info!("successful tick");
+            trace!("{:#?}", known_orders);
+            tokio::time::delay_for(tick_interval).await;
         }
-        if consecutive_errors > config.consecutive_errors_limit {
-            error!("Too many consecutive errors, exiting program");
-            break;
-        }
-        ::std::thread::sleep(::std::time::Duration::from_millis(config.check_interval as u64))
     }
-    Ok(())
 }
 
 #[tracing::instrument]
-fn get_config() -> Result<Config, Error> {
+async fn get_config() -> Result<Config, Error> {
+    use tokio::io::AsyncReadExt;
     trace!("get config");
     let mut config_path = home_dir().ok_or_else(|| Error::other("Unable to get home directory"))?;
     config_path.push(".pizza_freak");
-    let config_text = ::std::fs::read_to_string(config_path)?;
-    let config = toml::from_str(&config_text)?;
+    let mut config_file = tokio::fs::File::open(config_path).await?;
+    let mut config_text = Vec::new();
+    config_file.read_to_end(&mut config_text).await?;
+    let mut config: Config = toml::from_slice(&config_text)?;
+    let last_changed = config_file.metadata().await?.modified()?;
+    let last_changed  = last_changed.duration_since(std::time::UNIX_EPOCH)?;
+    config.last_changed = last_changed.as_secs();
     trace!("{:#?}", config);
     Ok(config)
 }
@@ -92,7 +108,7 @@ fn init_logging() {
 }
 
 #[tracing::instrument]
-fn update_order(user: &mut User, loc: &Location) -> Result<Option<response::Status>, Error> {
+async fn update_order(user: &mut User, loc: &Location) -> Result<Option<response::Status>, Error> {
     debug!("updating orders for {} at {}", user.name, loc.name);
     if let Some(order) = user.order.as_mut() {
         let dur = Local::now().signed_duration_since(order.first_seen);
@@ -100,7 +116,7 @@ fn update_order(user: &mut User, loc: &Location) -> Result<Option<response::Stat
             user.order = None;
             return Ok(None)
         }
-        let result = get_order(&loc.url, &user.phone_number.dashes_string())?;
+        let result = get_order(&loc.url, &user.phone_number.dashes_string()).await?;
         debug!("got orders from phone numbers");
         match result {
             response::Response::NoOrder(_r) => {
@@ -117,7 +133,7 @@ fn update_order(user: &mut User, loc: &Location) -> Result<Option<response::Stat
             }
         }
     } else {
-        let result = get_order(&loc.url, &user.phone_number.dashes_string())?;
+        let result = get_order(&loc.url, &user.phone_number.dashes_string()).await?;
         debug!("got orders from phone numbers");
         match result {
             response::Response::NoOrder(_r) => {
@@ -155,11 +171,11 @@ fn send_update(msg: &str, from_addr: &str, dest: &Destination) -> Result<(), Err
 }
 
 #[tracing::instrument]
-fn get_order(url_base: &str, phone_number: &str) -> Result<response::Response, Error> {
+async fn get_order(url_base: &str, phone_number: &str) -> Result<response::Response, Error> {
     let url = format!("{}{}", url_base, phone_number);
     trace!("{}", url);
-    let mut res = get(&url)?;
-    let text = res.text()?;
+    let res = get(&url).await?;
+    let text = res.text().await?;
     trace!("json text:\n{:?}", text);
     let ret = serde_json::from_str(&text).map_err(|e| {
         error!("failed to deserialize json: {:?}", text);
@@ -193,6 +209,14 @@ struct Config {
     pub locations: Vec<Location>,
     pub consecutive_errors_limit: usize,
     pub from_addr: String,
+    #[serde(default)]
+    pub last_changed: u64,
+}
+
+impl PartialEq for Config {
+    fn eq(&self, other: &Config) -> bool {
+        self.last_changed == other.last_changed
+    }
 }
 #[derive(Deserialize, Debug)]
 struct Location {
@@ -217,7 +241,7 @@ pub fn as_dest(&self) -> Result<Destination, Error> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 struct PhoneNumber {
     area_code: String,
     prefix: String,
@@ -286,6 +310,7 @@ enum Error {
     Cheap(cheap_alerts::Error),
     Io(::std::io::Error),
     Toml(toml::de::Error),
+    StdTime(std::time::SystemTimeError),
 }
 
 impl ::std::fmt::Display for Error {
@@ -299,6 +324,7 @@ impl ::std::fmt::Display for Error {
             Error::Io(ref e) => e.fmt(f),
             Error::Cheap(ref e) => e.fmt(f),
             Error::Toml(ref e) => e.fmt(f),
+            Error::StdTime(ref e) => e.fmt(f),
         }
     }
 }
@@ -306,56 +332,53 @@ impl ::std::fmt::Display for Error {
 impl ::std::error::Error for Error {}
 
 impl From<reqwest::Error> for Error {
-#[tracing::instrument]
     fn from(other: reqwest::Error) -> Self {
         Error::Reqwest(other)
     }
 }
 
 impl From<serde_json::Error> for Error {
-#[tracing::instrument]
     fn from(other: serde_json::Error) -> Self {
         Error::Json(other)
     }
 }
 
 impl From<chrono::ParseError> for Error {
-#[tracing::instrument]
     fn from(other: chrono::ParseError) -> Self {
         Error::Time(other)
     }
 }
 
 impl From<::std::num::ParseIntError>  for Error {
-#[tracing::instrument]
     fn from(other: ::std::num::ParseIntError) -> Self {
         Error::Parse(other)
     }
 }
 
 impl From<::std::io::Error> for Error {
-#[tracing::instrument]
     fn from(other: ::std::io::Error) -> Self {
         Error::Io(other)
     }
 }
 
 impl From<cheap_alerts::Error> for Error {
-#[tracing::instrument]
     fn from(other: cheap_alerts::Error) -> Self {
         Error::Cheap(other)
     }
 }
 
 impl From<toml::de::Error> for Error {
-#[tracing::instrument]
     fn from(other: toml::de::Error) -> Self {
         Error::Toml(other)
     }
 }
+impl From<std::time::SystemTimeError> for Error {
+    fn from(other: std::time::SystemTimeError) -> Self {
+        Error::StdTime(other)
+    }
+}
 
 impl Error {
-#[tracing::instrument]
     fn other(s: &str) -> Self {
         Error::Other(s.into())
     }

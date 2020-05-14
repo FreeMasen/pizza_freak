@@ -69,3 +69,80 @@ pub enum Link {
     LateAward(String),
     DriverPhoto(String,)
 }
+
+impl std::cmp::PartialOrd for Status {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        use Status::*;
+        use std::cmp::Ordering::*;
+        Some(match self {
+            Making | Cooking | MakingEmulated | CookingEmulated => {
+                match other {
+                    Deferred => Less,
+                    Making |
+                    MakingEmulated |
+                    CookingEmulated |
+                    Cooking => Equal,
+                    _ => Greater,
+                }
+            }
+            OnTheWay => {
+                match other {
+                    Deferred | Making | Cooking => Less,
+                    OnTheWay => Equal,
+                    _ => Greater,
+                }
+            }
+            PickupReady => {
+                match other {
+                    Deferred | Making | Cooking | OnTheWay => Less,
+                    PickupReady => Equal,
+                    _ => Greater,
+                }
+            }
+            Delivered => {
+                match other {
+                    Deferred | Making | Cooking | OnTheWay | PickupReady => Less,
+                    Delivered => Equal,
+                    _ => Greater,
+                }
+            }
+            PickedUp => {
+                match other {
+                    Deferred | Making | Cooking | OnTheWay | PickupReady => Less,
+                    PickedUp => Equal,
+                    _ => Greater,
+                }
+            }
+            Deferred => {
+                match other {
+                    Deferred => Equal,
+                    _ => Greater,
+                }
+            }
+            Questionnaire => {
+                match other {
+                    Questionnaire => Equal,
+                    _ => Less
+                }
+            }
+            Suspended => {
+                match other {
+                    Suspended => Equal,
+                    _ => Greater,
+                }
+            }
+            Canceled => {
+                match other {
+                    Canceled => Equal,
+                    _ => Less,
+                }
+            }
+            Reviewing => {
+                match other {
+                    Reviewing => Equal,
+                    _ => Greater,
+                }
+            }
+        })
+    }
+}

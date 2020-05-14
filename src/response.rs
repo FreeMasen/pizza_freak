@@ -35,6 +35,10 @@ pub struct Order {
     pub store_lng: f32,
     pub eligible_for_late_coupon: bool,
     pub has_registered_web_customer: bool,
+    #[serde(rename(deserialize = "driverGPSOff"))]
+    pub driver_gps_off: bool,
+    #[serde(rename(deserialize = "lastGPSRefresh"))]
+    pub last_gps_refresh: f32,
     pub links: Vec<Link>,
     #[serde(default = "chrono::Local::now")]
     pub first_seen: chrono::DateTime<chrono::Local>,

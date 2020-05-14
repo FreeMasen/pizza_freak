@@ -366,8 +366,9 @@ mod test {
     use super::*;
     #[test]
     fn order_deserialize() {
-        let order = include_str!("../out.json");
+        let no_order = include_str!("../ph-example-empty.json");
+        let order = include_str!("../ph-example-with.json");
+        let _: response::Response = serde_json::from_str(&no_order).unwrap();
         let _: response::Response = serde_json::from_str(&order).unwrap();
-
     }
 }
